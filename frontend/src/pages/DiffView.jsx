@@ -14,10 +14,9 @@ export default function DiffView() {
   const [project, setProject] = useState(null);
   const [commitA, setCommitA] = useState("");
   const [commitB, setCommitB] = useState("");
+  const [selectedFilename, setSelectedFilename] = useState("");
   const [snapA, setSnapA] = useState(null);
   const [snapB, setSnapB] = useState(null);
-  const [fileA, setFileA] = useState("");
-  const [fileB, setFileB] = useState("");
   const [mode, setMode] = useState("slider");
   const [sliderPos, setSliderPos] = useState(50);
   const [opacity, setOpacity] = useState(50);
@@ -27,7 +26,6 @@ export default function DiffView() {
   const containerRef = useRef(null);
   const isDragging = useRef(false);
 
-  // Load project
   useEffect(() => {
     api.getProject(id).then((p) => {
       setProject(p);
@@ -38,48 +36,36 @@ export default function DiffView() {
     });
   }, [id]);
 
-  const matchByName = (snaps, name) =>
-    snaps?.find((s) => s.filename === name) ?? snaps?.[0] ?? null;
-
-  // Set snapshots when commits change — match by filename
-  useEffect(() => {
-    if (!project) return;
+  // Derive union of filenames from both commits
+  const getFileList = useCallback(() => {
+    if (!project) return [];
     const cA = project.commits.find((c) => c.id === commitA);
     const cB = project.commits.find((c) => c.id === commitB);
-    const sA = cA?.snapshots?.[0] ?? null;
-    const sB = matchByName(cB?.snapshots, sA?.filename);
-    setSnapA(sA);
-    setSnapB(sB);
-    setFileA(sA?.id ?? "");
-    setFileB(sB?.id ?? "");
+    const names = new Set([
+      ...(cA?.snapshots ?? []).map((s) => s.filename),
+      ...(cB?.snapshots ?? []).map((s) => s.filename),
+    ]);
+    return [...names];
+  }, [project, commitA, commitB]);
+
+  // When commits change, reset to first file
+  useEffect(() => {
+    if (!project) return;
+    const files = getFileList();
+    const name = files[0] ?? "";
+    setSelectedFilename(name);
     setDiffResult(null);
   }, [commitA, commitB, project]);
 
-  // When user changes file A, auto-match B by name
-  const handleFileAChange = (newId) => {
-    setFileA(newId);
+  // When selected filename changes, update snaps
+  useEffect(() => {
+    if (!project || !selectedFilename) return;
     const cA = project.commits.find((c) => c.id === commitA);
     const cB = project.commits.find((c) => c.id === commitB);
-    const sA = cA?.snapshots?.find((s) => s.id === newId);
-    const sB = matchByName(cB?.snapshots, sA?.filename);
-    setSnapA(sA);
-    setSnapB(sB);
-    setFileB(sB?.id ?? "");
+    setSnapA(cA?.snapshots?.find((s) => s.filename === selectedFilename) ?? null);
+    setSnapB(cB?.snapshots?.find((s) => s.filename === selectedFilename) ?? null);
     setDiffResult(null);
-  };
-
-  // When user changes file B, auto-match A by name
-  const handleFileBChange = (newId) => {
-    setFileB(newId);
-    const cA = project.commits.find((c) => c.id === commitA);
-    const cB = project.commits.find((c) => c.id === commitB);
-    const sB = cB?.snapshots?.find((s) => s.id === newId);
-    const sA = matchByName(cA?.snapshots, sB?.filename);
-    setSnapA(sA);
-    setSnapB(sB);
-    setFileA(sA?.id ?? "");
-    setDiffResult(null);
-  };
+  }, [selectedFilename, commitA, commitB, project]);
 
   // Generate pixel diff
   useEffect(() => {
@@ -87,33 +73,24 @@ export default function DiffView() {
       setLoadingDiff(true);
       api
         .generateDiff(snapA.storage_path, snapB.storage_path)
-        .then((res) => {
-          setDiffResult(res);
-          setLoadingDiff(false);
-        })
+        .then((res) => { setDiffResult(res); setLoadingDiff(false); })
         .catch(() => setLoadingDiff(false));
     }
   }, [mode, snapA, snapB]);
 
-  // Slider drag handlers
   const updateSlider = useCallback((clientX) => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    const x = ((clientX - rect.left) / rect.width) * 100;
-    setSliderPos(Math.max(0, Math.min(100, x)));
+    setSliderPos(Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100)));
   }, []);
 
   useEffect(() => {
     const onMove = (e) => {
       if (!isDragging.current) return;
       e.preventDefault();
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      updateSlider(clientX);
+      updateSlider(e.touches ? e.touches[0].clientX : e.clientX);
     };
-    const onUp = () => {
-      isDragging.current = false;
-    };
-
+    const onUp = () => { isDragging.current = false; };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     window.addEventListener("touchmove", onMove, { passive: false });
@@ -132,18 +109,15 @@ export default function DiffView() {
   const urlA = snapA ? api.storageUrl(snapA.storage_path) : null;
   const urlB = snapB ? api.storageUrl(snapB.storage_path) : null;
   const commitsData = project.commits;
+  const fileList = getFileList();
 
   return (
     <div>
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
-        <Link to="/" className="hover:text-gray-300">
-          Projects
-        </Link>
+        <Link to="/" className="hover:text-gray-300">Projects</Link>
         <span>/</span>
-        <Link to={`/project/${id}`} className="hover:text-gray-300">
-          {project.name}
-        </Link>
+        <Link to={`/project/${id}`} className="hover:text-gray-300">{project.name}</Link>
         <span>/</span>
         <span className="text-gray-300">Compare</span>
       </div>
@@ -152,36 +126,23 @@ export default function DiffView() {
 
       {/* Commit Selectors */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        {[{ label: "Before (A)", color: "text-red-400", commit: commitA, setCommit: setCommitA, file: fileA, onFileChange: handleFileAChange },
-          { label: "After (B)",  color: "text-green-400", commit: commitB, setCommit: setCommitB, file: fileB, onFileChange: handleFileBChange }]
-          .map(({ label, color, commit, setCommit, file, onFileChange }) => {
-            const snaps = commitsData.find((c) => c.id === commit)?.snapshots ?? [];
-            return (
-              <div key={label} className="flex flex-col gap-2">
-                <label className={`text-xs font-semibold ${color} uppercase tracking-wider`}>● {label}</label>
-                <select
-                  value={commit}
-                  onChange={(e) => setCommit(e.target.value)}
-                  className="w-full bg-[#161b22] border border-gray-700 rounded-lg px-4 py-2.5 outline-none focus:border-[#58a6ff] transition text-sm"
-                >
-                  {commitsData.map((c) => (
-                    <option key={c.id} value={c.id}>{c.message} — {c.id}</option>
-                  ))}
-                </select>
-                {snaps.length > 1 && (
-                  <select
-                    value={file}
-                    onChange={(e) => onFileChange(e.target.value)}
-                    className="w-full bg-[#161b22] border border-gray-700 rounded-lg px-4 py-2.5 outline-none focus:border-[#58a6ff] transition text-sm"
-                  >
-                    {snaps.map((s) => (
-                      <option key={s.id} value={s.id}>{s.filename}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            );
-          })}
+        {[
+          { label: "Before (A)", color: "text-red-400", value: commitA, onChange: setCommitA },
+          { label: "After (B)",  color: "text-green-400", value: commitB, onChange: setCommitB },
+        ].map(({ label, color, value, onChange }) => (
+          <div key={label}>
+            <label className={`text-xs font-semibold ${color} uppercase tracking-wider mb-1 block`}>● {label}</label>
+            <select
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              className="w-full bg-[#161b22] border border-gray-700 rounded-lg px-4 py-2.5 outline-none focus:border-[#58a6ff] transition text-sm"
+            >
+              {commitsData.map((c) => (
+                <option key={c.id} value={c.id}>{c.message} — {c.id}</option>
+              ))}
+            </select>
+          </div>
+        ))}
       </div>
 
       {/* Mode Toggle */}
@@ -201,182 +162,151 @@ export default function DiffView() {
         ))}
       </div>
 
-      {/* Diff Display Area */}
-      {urlA && urlB ? (
-        <div className="bg-[#161b22] border border-gray-700 rounded-xl overflow-hidden">
-          {/* ═══ SLIDER MODE ═══ */}
-          {mode === "slider" && (
-            <div
-              ref={containerRef}
-              className="relative select-none cursor-col-resize"
-              style={{ aspectRatio: "16 / 10" }}
-              onMouseDown={(e) => {
-                isDragging.current = true;
-                updateSlider(e.clientX);
-              }}
-              onTouchStart={(e) => {
-                isDragging.current = true;
-                updateSlider(e.touches[0].clientX);
-              }}
-            >
-              {/* Image A — full background */}
-              <img
-                src={urlA}
-                alt="A"
-                className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-                draggable={false}
-              />
-              {/* Image B — clipped */}
-              <div
-                className="absolute inset-0 overflow-hidden"
-                style={{
-                  clipPath: `inset(0 ${100 - sliderPos}% 0 0)`,
-                }}
-              >
-                <img
-                  src={urlB}
-                  alt="B"
-                  className="w-full h-full object-contain pointer-events-none"
-                  draggable={false}
-                />
-              </div>
-              {/* Slider line */}
-              <div
-                className="absolute top-0 bottom-0 w-0.5 bg-white z-20"
-                style={{ left: `${sliderPos}%` }}
-              >
-                <div
-                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
-                                w-10 h-10 bg-white rounded-full shadow-lg
-                                flex items-center justify-center text-black font-bold text-lg"
+      {/* Main layout: sidebar + diff area */}
+      <div className="flex gap-4 items-start">
+
+        {/* File Sidebar */}
+        {fileList.length > 0 && (
+          <div className="w-56 shrink-0 bg-[#161b22] border border-gray-800 rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-gray-800 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Files <span className="text-gray-600 font-normal">({fileList.length})</span>
+            </div>
+            {fileList.map((name) => {
+              const inA = commitsData.find((c) => c.id === commitA)?.snapshots?.some((s) => s.filename === name);
+              const inB = commitsData.find((c) => c.id === commitB)?.snapshots?.some((s) => s.filename === name);
+              const isNew = !inA && inB;
+              const isRemoved = inA && !inB;
+              return (
+                <button
+                  key={name}
+                  onClick={() => setSelectedFilename(name)}
+                  className={`w-full text-left px-3 py-2.5 text-sm flex items-center gap-2 transition border-l-2 ${
+                    selectedFilename === name
+                      ? "bg-[#1c2128] border-[#58a6ff] text-white"
+                      : "border-transparent hover:bg-[#1c2128] text-gray-400 hover:text-gray-200"
+                  }`}
                 >
-                  ⟺
-                </div>
-              </div>
-              {/* Labels */}
-              <div className="absolute top-3 left-3 bg-red-500/80 backdrop-blur px-2.5 py-1 rounded-md text-xs font-semibold z-10">
-                BEFORE
-              </div>
-              <div className="absolute top-3 right-3 bg-green-500/80 backdrop-blur px-2.5 py-1 rounded-md text-xs font-semibold z-10">
-                AFTER
-              </div>
-            </div>
-          )}
+                  <span className={`text-xs font-bold w-3 shrink-0 ${isNew ? "text-green-400" : isRemoved ? "text-red-400" : "text-gray-600"}`}>
+                    {isNew ? "A" : isRemoved ? "D" : "M"}
+                  </span>
+                  <span className="truncate">{name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-          {/* ═══ SIDE BY SIDE ═══ */}
-          {mode === "side" && (
-            <div className="grid grid-cols-2 gap-[2px] bg-gray-800">
-              <div className="relative bg-[#161b22]">
-                <img
-                  src={urlA}
-                  alt="A"
-                  className="w-full object-contain"
-                />
-                <div className="absolute top-3 left-3 bg-red-500/80 backdrop-blur px-2.5 py-1 rounded-md text-xs font-semibold">
-                  BEFORE
-                </div>
+        {/* Diff Display Area */}
+        <div className="flex-1 min-w-0">
+          {(urlA || urlB) ? (
+            <div className="bg-[#161b22] border border-gray-700 rounded-xl overflow-hidden">
+              {/* File header like GitHub */}
+              <div className="px-4 py-2.5 border-b border-gray-700 flex items-center gap-3 text-sm">
+                <span className="font-mono text-gray-300">{selectedFilename}</span>
+                <span className="text-xs text-gray-600 font-mono">{snapA?.file_hash?.slice(0, 7)}</span>
+                <span className="text-gray-600">→</span>
+                <span className="text-xs text-gray-600 font-mono">{snapB?.file_hash?.slice(0, 7)}</span>
               </div>
-              <div className="relative bg-[#161b22]">
-                <img
-                  src={urlB}
-                  alt="B"
-                  className="w-full object-contain"
-                />
-                <div className="absolute top-3 left-3 bg-green-500/80 backdrop-blur px-2.5 py-1 rounded-md text-xs font-semibold">
-                  AFTER
-                </div>
-              </div>
-            </div>
-          )}
 
-          {/* ═══ ONION SKIN ═══ */}
-          {mode === "onion" && (
-            <div>
-              <div className="relative" style={{ aspectRatio: "16 / 10" }}>
-                <img
-                  src={urlA}
-                  alt="A"
-                  className="absolute inset-0 w-full h-full object-contain"
-                />
-                <img
-                  src={urlB}
-                  alt="B"
-                  className="absolute inset-0 w-full h-full object-contain transition-opacity duration-150"
-                  style={{ opacity: opacity / 100 }}
-                />
-              </div>
-              <div className="p-4 border-t border-gray-700 flex items-center gap-4">
-                <span className="text-xs font-semibold text-red-400 w-16">
-                  Before
-                </span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={opacity}
-                  onChange={(e) => setOpacity(Number(e.target.value))}
-                  className="flex-1"
-                />
-                <span className="text-xs font-semibold text-green-400 w-16 text-right">
-                  After
-                </span>
-                <span className="text-sm text-[#58a6ff] font-mono w-12 text-right">
-                  {opacity}%
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* ═══ PIXEL DIFF ═══ */}
-          {mode === "pixel" && (
-            <div>
-              <div className="relative" style={{ aspectRatio: "16 / 10" }}>
-                <img
-                  src={urlA}
-                  alt="Base"
-                  className="absolute inset-0 w-full h-full object-contain opacity-30"
-                />
-                {loadingDiff && (
-                  <div className="absolute inset-0 flex items-center justify-center z-10">
-                    <div className="bg-black/60 backdrop-blur px-4 py-2 rounded-lg text-sm">
-                      Generating diff...
+              {/* ═══ ONLY IN ONE COMMIT ═══ */}
+              {(!urlA || !urlB) && (
+                <div className="relative">
+                  <img src={urlA ?? urlB} alt={selectedFilename} className="w-full object-contain" />
+                  <div className={`absolute inset-0 flex items-end p-4 bg-gradient-to-t ${urlB ? "from-green-950/80" : "from-red-950/80"} to-transparent pointer-events-none`}>
+                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-mono font-semibold ${urlB ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-red-500/20 text-red-400 border border-red-500/30"}`}>
+                      <span className="text-lg">{urlB ? "+" : "-"}</span>
+                      {urlB ? "File added in this commit" : "File removed after this commit"}
                     </div>
                   </div>
-                )}
-                {diffResult && (
-                  <img
-                    src={api.storageUrl(diffResult.diff_path)}
-                    alt="Diff"
-                    className="absolute inset-0 w-full h-full object-contain z-10"
-                  />
-                )}
-              </div>
-              {diffResult && (
-                <div className="p-4 border-t border-gray-700 flex items-center gap-6 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 bg-[#ff3c50] rounded-sm inline-block" />
-                    <span className="text-sm text-gray-300">
-                      Changed pixels
-                    </span>
+                </div>
+              )}
+
+              {/* ═══ SLIDER MODE ═══ */}
+              {mode === "slider" && urlA && urlB && (
+                <div
+                  ref={containerRef}
+                  className="relative select-none cursor-col-resize"
+                  style={{ aspectRatio: "16 / 10" }}
+                  onMouseDown={(e) => { isDragging.current = true; updateSlider(e.clientX); }}
+                  onTouchStart={(e) => { isDragging.current = true; updateSlider(e.touches[0].clientX); }}
+                >
+                  <img src={urlA} alt="A" className="absolute inset-0 w-full h-full object-contain pointer-events-none" draggable={false} />
+                  <div className="absolute inset-0 overflow-hidden" style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}>
+                    <img src={urlB} alt="B" className="w-full h-full object-contain pointer-events-none" draggable={false} />
                   </div>
-                  <span className="text-lg font-bold text-red-400 font-mono">
-                    {diffResult.change_percent}%
-                  </span>
-                  <span className="text-sm text-gray-500">
-                    {diffResult.changed_pixels.toLocaleString()} /{" "}
-                    {diffResult.total_pixels.toLocaleString()} px
-                  </span>
+                  <div className="absolute top-0 bottom-0 w-0.5 bg-white z-20" style={{ left: `${sliderPos}%` }}>
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-white rounded-full shadow-lg flex items-center justify-center text-black font-bold text-lg">⟺</div>
+                  </div>
+                  <div className="absolute top-3 left-3 bg-red-500/80 backdrop-blur px-2.5 py-1 rounded-md text-xs font-semibold z-10">BEFORE</div>
+                  <div className="absolute top-3 right-3 bg-green-500/80 backdrop-blur px-2.5 py-1 rounded-md text-xs font-semibold z-10">AFTER</div>
+                </div>
+              )}
+
+              {/* ═══ SIDE BY SIDE ═══ */}
+              {mode === "side" && urlA && urlB && (
+                <div className="grid grid-cols-2 gap-[2px] bg-gray-800">
+                  <div className="relative bg-[#161b22]">
+                    <img src={urlA} alt="A" className="w-full object-contain" />
+                    <div className="absolute top-3 left-3 bg-red-500/80 backdrop-blur px-2.5 py-1 rounded-md text-xs font-semibold">BEFORE</div>
+                  </div>
+                  <div className="relative bg-[#161b22]">
+                    <img src={urlB} alt="B" className="w-full object-contain" />
+                    <div className="absolute top-3 left-3 bg-green-500/80 backdrop-blur px-2.5 py-1 rounded-md text-xs font-semibold">AFTER</div>
+                  </div>
+                </div>
+              )}
+
+              {/* ═══ ONION SKIN ═══ */}
+              {mode === "onion" && urlA && urlB && (
+                <div>
+                  <div className="relative" style={{ aspectRatio: "16 / 10" }}>
+                    <img src={urlA} alt="A" className="absolute inset-0 w-full h-full object-contain" />
+                    <img src={urlB} alt="B" className="absolute inset-0 w-full h-full object-contain transition-opacity duration-150" style={{ opacity: opacity / 100 }} />
+                  </div>
+                  <div className="p-4 border-t border-gray-700 flex items-center gap-4">
+                    <span className="text-xs font-semibold text-red-400 w-16">Before</span>
+                    <input type="range" min="0" max="100" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} className="flex-1" />
+                    <span className="text-xs font-semibold text-green-400 w-16 text-right">After</span>
+                    <span className="text-sm text-[#58a6ff] font-mono w-12 text-right">{opacity}%</span>
+                  </div>
+                </div>
+              )}
+
+              {/* ═══ PIXEL DIFF ═══ */}
+              {mode === "pixel" && urlA && urlB && (
+                <div>
+                  <div className="relative" style={{ aspectRatio: "16 / 10" }}>
+                    <img src={urlA} alt="Base" className="absolute inset-0 w-full h-full object-contain opacity-30" />
+                    {loadingDiff && (
+                      <div className="absolute inset-0 flex items-center justify-center z-10">
+                        <div className="bg-black/60 backdrop-blur px-4 py-2 rounded-lg text-sm">Generating diff...</div>
+                      </div>
+                    )}
+                    {diffResult && (
+                      <img src={api.storageUrl(diffResult.diff_path)} alt="Diff" className="absolute inset-0 w-full h-full object-contain z-10" />
+                    )}
+                  </div>
+                  {diffResult && (
+                    <div className="p-4 border-t border-gray-700 flex items-center gap-6 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 bg-[#ff3c50] rounded-sm inline-block" />
+                        <span className="text-sm text-gray-300">Changed pixels</span>
+                      </div>
+                      <span className="text-lg font-bold text-red-400 font-mono">{diffResult.change_percent}%</span>
+                      <span className="text-sm text-gray-500">{diffResult.changed_pixels.toLocaleString()} / {diffResult.total_pixels.toLocaleString()} px</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
+          ) : (
+            <div className="bg-[#161b22] border border-gray-700 rounded-xl p-16 text-center text-gray-500">
+              <div className="text-5xl mb-4">🖼️</div>
+              <p>Select two commits to compare</p>
+            </div>
           )}
         </div>
-      ) : (
-        <div className="bg-[#161b22] border border-gray-700 rounded-xl p-16 text-center text-gray-500">
-          <div className="text-5xl mb-4">🖼️</div>
-          <p>Select two commits with images to compare</p>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
