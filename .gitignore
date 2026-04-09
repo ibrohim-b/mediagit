@@ -14,3 +14,7 @@ frontend/dist/
 # Env
 .env
 .env.local
+
+.DS_Store
+.idea/
+.vscode/
