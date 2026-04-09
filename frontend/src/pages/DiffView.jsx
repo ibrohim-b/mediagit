@@ -38,34 +38,48 @@ export default function DiffView() {
     });
   }, [id]);
 
-  // Set snapshots when commits change
+  const matchByName = (snaps, name) =>
+    snaps?.find((s) => s.filename === name) ?? snaps?.[0] ?? null;
+
+  // Set snapshots when commits change — match by filename
   useEffect(() => {
     if (!project) return;
     const cA = project.commits.find((c) => c.id === commitA);
     const cB = project.commits.find((c) => c.id === commitB);
-    const firstA = cA?.snapshots?.[0] ?? null;
-    const firstB = cB?.snapshots?.[0] ?? null;
-    setSnapA(firstA);
-    setSnapB(firstB);
-    setFileA(firstA?.id ?? "");
-    setFileB(firstB?.id ?? "");
+    const sA = cA?.snapshots?.[0] ?? null;
+    const sB = matchByName(cB?.snapshots, sA?.filename);
+    setSnapA(sA);
+    setSnapB(sB);
+    setFileA(sA?.id ?? "");
+    setFileB(sB?.id ?? "");
     setDiffResult(null);
   }, [commitA, commitB, project]);
 
-  // Update snap when file selection changes
-  useEffect(() => {
-    if (!project || !fileA) return;
+  // When user changes file A, auto-match B by name
+  const handleFileAChange = (newId) => {
+    setFileA(newId);
     const cA = project.commits.find((c) => c.id === commitA);
-    const s = cA?.snapshots?.find((s) => s.id === fileA);
-    if (s) { setSnapA(s); setDiffResult(null); }
-  }, [fileA]);
-
-  useEffect(() => {
-    if (!project || !fileB) return;
     const cB = project.commits.find((c) => c.id === commitB);
-    const s = cB?.snapshots?.find((s) => s.id === fileB);
-    if (s) { setSnapB(s); setDiffResult(null); }
-  }, [fileB]);
+    const sA = cA?.snapshots?.find((s) => s.id === newId);
+    const sB = matchByName(cB?.snapshots, sA?.filename);
+    setSnapA(sA);
+    setSnapB(sB);
+    setFileB(sB?.id ?? "");
+    setDiffResult(null);
+  };
+
+  // When user changes file B, auto-match A by name
+  const handleFileBChange = (newId) => {
+    setFileB(newId);
+    const cA = project.commits.find((c) => c.id === commitA);
+    const cB = project.commits.find((c) => c.id === commitB);
+    const sB = cB?.snapshots?.find((s) => s.id === newId);
+    const sA = matchByName(cA?.snapshots, sB?.filename);
+    setSnapA(sA);
+    setSnapB(sB);
+    setFileA(sA?.id ?? "");
+    setDiffResult(null);
+  };
 
   // Generate pixel diff
   useEffect(() => {
@@ -138,9 +152,9 @@ export default function DiffView() {
 
       {/* Commit Selectors */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        {[{ label: "Before (A)", color: "text-red-400", commit: commitA, setCommit: setCommitA, file: fileA, setFile: setFileA },
-          { label: "After (B)",  color: "text-green-400", commit: commitB, setCommit: setCommitB, file: fileB, setFile: setFileB }]
-          .map(({ label, color, commit, setCommit, file, setFile }) => {
+        {[{ label: "Before (A)", color: "text-red-400", commit: commitA, setCommit: setCommitA, file: fileA, onFileChange: handleFileAChange },
+          { label: "After (B)",  color: "text-green-400", commit: commitB, setCommit: setCommitB, file: fileB, onFileChange: handleFileBChange }]
+          .map(({ label, color, commit, setCommit, file, onFileChange }) => {
             const snaps = commitsData.find((c) => c.id === commit)?.snapshots ?? [];
             return (
               <div key={label} className="flex flex-col gap-2">
@@ -157,7 +171,7 @@ export default function DiffView() {
                 {snaps.length > 1 && (
                   <select
                     value={file}
-                    onChange={(e) => setFile(e.target.value)}
+                    onChange={(e) => onFileChange(e.target.value)}
                     className="w-full bg-[#161b22] border border-gray-700 rounded-lg px-4 py-2.5 outline-none focus:border-[#58a6ff] transition text-sm"
                   >
                     {snaps.map((s) => (
