@@ -16,6 +16,8 @@ export default function DiffView() {
   const [commitB, setCommitB] = useState("");
   const [snapA, setSnapA] = useState(null);
   const [snapB, setSnapB] = useState(null);
+  const [fileA, setFileA] = useState("");
+  const [fileB, setFileB] = useState("");
   const [mode, setMode] = useState("slider");
   const [sliderPos, setSliderPos] = useState(50);
   const [opacity, setOpacity] = useState(50);
@@ -41,12 +43,29 @@ export default function DiffView() {
     if (!project) return;
     const cA = project.commits.find((c) => c.id === commitA);
     const cB = project.commits.find((c) => c.id === commitB);
-    if (cA?.snapshots?.length > 0) setSnapA(cA.snapshots[0]);
-    else setSnapA(null);
-    if (cB?.snapshots?.length > 0) setSnapB(cB.snapshots[0]);
-    else setSnapB(null);
+    const firstA = cA?.snapshots?.[0] ?? null;
+    const firstB = cB?.snapshots?.[0] ?? null;
+    setSnapA(firstA);
+    setSnapB(firstB);
+    setFileA(firstA?.id ?? "");
+    setFileB(firstB?.id ?? "");
     setDiffResult(null);
   }, [commitA, commitB, project]);
+
+  // Update snap when file selection changes
+  useEffect(() => {
+    if (!project || !fileA) return;
+    const cA = project.commits.find((c) => c.id === commitA);
+    const s = cA?.snapshots?.find((s) => s.id === fileA);
+    if (s) { setSnapA(s); setDiffResult(null); }
+  }, [fileA]);
+
+  useEffect(() => {
+    if (!project || !fileB) return;
+    const cB = project.commits.find((c) => c.id === commitB);
+    const s = cB?.snapshots?.find((s) => s.id === fileB);
+    if (s) { setSnapB(s); setDiffResult(null); }
+  }, [fileB]);
 
   // Generate pixel diff
   useEffect(() => {
@@ -119,40 +138,36 @@ export default function DiffView() {
 
       {/* Commit Selectors */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div>
-          <label className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-1 block">
-            ● Before (A)
-          </label>
-          <select
-            value={commitA}
-            onChange={(e) => setCommitA(e.target.value)}
-            className="w-full bg-[#161b22] border border-gray-700 rounded-lg px-4 py-2.5 outline-none 
-                       focus:border-[#58a6ff] transition text-sm"
-          >
-            {commitsData.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.message} — {c.id}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-green-400 uppercase tracking-wider mb-1 block">
-            ● After (B)
-          </label>
-          <select
-            value={commitB}
-            onChange={(e) => setCommitB(e.target.value)}
-            className="w-full bg-[#161b22] border border-gray-700 rounded-lg px-4 py-2.5 outline-none 
-                       focus:border-[#58a6ff] transition text-sm"
-          >
-            {commitsData.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.message} — {c.id}
-              </option>
-            ))}
-          </select>
-        </div>
+        {[{ label: "Before (A)", color: "text-red-400", commit: commitA, setCommit: setCommitA, file: fileA, setFile: setFileA },
+          { label: "After (B)",  color: "text-green-400", commit: commitB, setCommit: setCommitB, file: fileB, setFile: setFileB }]
+          .map(({ label, color, commit, setCommit, file, setFile }) => {
+            const snaps = commitsData.find((c) => c.id === commit)?.snapshots ?? [];
+            return (
+              <div key={label} className="flex flex-col gap-2">
+                <label className={`text-xs font-semibold ${color} uppercase tracking-wider`}>● {label}</label>
+                <select
+                  value={commit}
+                  onChange={(e) => setCommit(e.target.value)}
+                  className="w-full bg-[#161b22] border border-gray-700 rounded-lg px-4 py-2.5 outline-none focus:border-[#58a6ff] transition text-sm"
+                >
+                  {commitsData.map((c) => (
+                    <option key={c.id} value={c.id}>{c.message} — {c.id}</option>
+                  ))}
+                </select>
+                {snaps.length > 1 && (
+                  <select
+                    value={file}
+                    onChange={(e) => setFile(e.target.value)}
+                    className="w-full bg-[#161b22] border border-gray-700 rounded-lg px-4 py-2.5 outline-none focus:border-[#58a6ff] transition text-sm"
+                  >
+                    {snaps.map((s) => (
+                      <option key={s.id} value={s.id}>{s.filename}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            );
+          })}
       </div>
 
       {/* Mode Toggle */}
