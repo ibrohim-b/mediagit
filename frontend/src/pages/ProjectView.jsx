@@ -7,6 +7,7 @@ export default function ProjectView() {
   const nav = useNavigate();
   const [project, setProject] = useState(null);
   const [staged, setStaged] = useState([]);
+  const [stagedRemovals, setStagedRemovals] = useState(new Set());
   const [message, setMessage] = useState("");
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -41,17 +42,27 @@ export default function ProjectView() {
   };
 
   const commit = async () => {
-    if (!message.trim() || staged.length === 0) return;
+    if (!message.trim() || (staged.length === 0 && stagedRemovals.size === 0)) return;
+
+    // Carry forward latest version of each file, excluding removals and files being replaced
+    const latestFiles = new Map();
+    [...project.commits].reverse().forEach((c) =>
+      c.snapshots.forEach((s) => { if (!latestFiles.has(s.filename)) latestFiles.set(s.filename, s); })
+    );
+    const newFilenames = new Set(staged.map((s) => s.filename));
+    const carried = [...latestFiles.values()].filter(
+      (s) => !stagedRemovals.has(s.filename) && !newFilenames.has(s.filename)
+    );
+
     await api.createCommit(id, {
       message,
-      snapshots: staged.map((s) => ({
-        filename: s.filename,
-        file_hash: s.file_hash,
-        storage_path: s.storage_path,
-        file_size: s.file_size,
-      })),
+      snapshots: [
+        ...carried.map((s) => ({ filename: s.filename, file_hash: s.file_hash, storage_path: s.storage_path, file_size: s.file_size })),
+        ...staged.map((s) => ({ filename: s.filename, file_hash: s.file_hash, storage_path: s.storage_path, file_size: s.file_size })),
+      ],
     });
     setStaged([]);
+    setStagedRemovals(new Set());
     setMessage("");
     load();
   };
@@ -136,15 +147,32 @@ export default function ProjectView() {
       </div>
 
       {/* Staged Files */}
-      {staged.length > 0 && (
+      {(staged.length > 0 || stagedRemovals.size > 0) && (
         <div className="bg-[#161b22] border border-[#238636] rounded-xl p-5 mb-6">
           <h3 className="text-sm font-semibold text-[#3fb950] mb-3 flex items-center gap-2">
             <span className="w-2 h-2 bg-[#3fb950] rounded-full animate-pulse" />
-            Staged Changes — {staged.length} file
-            {staged.length > 1 ? "s" : ""}
+            Staged Changes — {staged.length + stagedRemovals.size} file{staged.length + stagedRemovals.size > 1 ? "s" : ""}
           </h3>
 
           <div className="flex gap-3 flex-wrap mb-4">
+            {[...stagedRemovals].map((filename) => {
+              const snap = project.commits
+                .flatMap((c) => c.snapshots)
+                .find((s) => s.filename === filename);
+              return snap ? (
+                <div key={filename} className="relative group">
+                  <img src={api.storageUrl(snap.storage_path)} alt={filename} className="w-24 h-24 object-cover rounded-lg border border-red-800 opacity-50" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-red-400 text-3xl font-bold">−</span>
+                  </div>
+                  <button
+                    onClick={() => setStagedRemovals((prev) => { const n = new Set(prev); n.delete(filename); return n; })}
+                    className="absolute -top-2 -right-2 bg-gray-700 hover:bg-gray-600 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+                  >×</button>
+                  <p className="text-xs text-red-400 mt-1 truncate w-24">{filename}</p>
+                </div>
+              ) : null;
+            })}
             {staged.map((s, i) => (
               <div key={i} className="relative group">
                 <img
@@ -196,7 +224,9 @@ export default function ProjectView() {
             fileMap.set(s.filename, { snap: s, count: (fileMap.get(s.filename)?.count ?? 0) + 1 });
           })
         );
-        const files = [...fileMap.entries()];
+        // Only show files present in the latest commit
+        const latestSnaps = new Set(project.commits[0]?.snapshots.map((s) => s.filename) ?? []);
+        const files = [...fileMap.entries()].filter(([name]) => latestSnaps.has(name));
         return (
           <div className="mb-8">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -215,10 +245,25 @@ export default function ProjectView() {
                     className="w-10 h-10 object-cover rounded border border-gray-700 cursor-pointer"
                     onClick={() => window.open(api.storageUrl(snap.storage_path), "_blank")}
                   />
-                  <a href={api.storageUrl(snap.storage_path)} target="_blank" rel="noopener noreferrer" className="flex-1 text-sm text-gray-200 truncate">
+                  <a href={api.storageUrl(snap.storage_path)} target="_blank" rel="noopener noreferrer" className="flex-1 text-sm text-gray-200 truncate hover:underline">
                     {name}
                   </a>
                   <span className="text-xs text-gray-500">{count} version{count > 1 ? "s" : ""}</span>
+                  <button
+                    onClick={() => setStagedRemovals((prev) => {
+                      const n = new Set(prev);
+                      n.has(name) ? n.delete(name) : n.add(name);
+                      return n;
+                    })}
+                    className={`text-xs px-2 py-1 rounded transition ${
+                      stagedRemovals.has(name)
+                        ? "bg-red-500/20 text-red-400 border border-red-500/40 hover:bg-red-500/30"
+                        : "text-gray-600 hover:text-red-400 border border-transparent hover:border-red-500/30"
+                    }`}
+                    title={stagedRemovals.has(name) ? "Unstage removal" : "Stage for removal"}
+                  >
+                    {stagedRemovals.has(name) ? "− staged" : "− remove"}
+                  </button>
                 </div>
               ))}
             </div>
