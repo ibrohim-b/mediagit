@@ -188,6 +188,42 @@ export default function ProjectView() {
         </div>
       )}
 
+      {/* Files List */}
+      {project.commits.length > 0 && (() => {
+        const fileMap = new Map();
+        [...project.commits].reverse().forEach((c) =>
+          c.snapshots.forEach((s) => {
+            fileMap.set(s.filename, { snap: s, count: (fileMap.get(s.filename)?.count ?? 0) + 1 });
+          })
+        );
+        const files = [...fileMap.entries()];
+        return (
+          <div className="mb-8">
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <span>🗂️</span> Files
+              <span className="text-sm font-normal text-gray-500">({files.length})</span>
+            </h2>
+            <div className="bg-[#161b22] border border-gray-800 rounded-xl overflow-hidden">
+              {files.map(([name, { snap, count }], i) => (
+                <div
+                  key={name}
+                  className={`flex items-center gap-4 px-4 py-3 hover:bg-[#1c2128] transition ${i < files.length - 1 ? "border-b border-gray-800" : ""}`}
+                >
+                  <img
+                    src={api.storageUrl(snap.storage_path)}
+                    alt={name}
+                    className="w-10 h-10 object-cover rounded border border-gray-700 cursor-pointer"
+                    onClick={() => window.open(api.storageUrl(snap.storage_path), "_blank")}
+                  />
+                  <span className="flex-1 text-sm text-gray-200 truncate">{name}</span>
+                  <span className="text-xs text-gray-500">{count} version{count > 1 ? "s" : ""}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Commit Timeline */}
       <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
         <span>📜</span> Commit History
