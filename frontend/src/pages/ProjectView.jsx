@@ -215,7 +215,9 @@ export default function ProjectView() {
                     className="w-10 h-10 object-cover rounded border border-gray-700 cursor-pointer"
                     onClick={() => window.open(api.storageUrl(snap.storage_path), "_blank")}
                   />
-                  <span className="flex-1 text-sm text-gray-200 truncate">{name}</span>
+                  <a href={api.storageUrl(snap.storage_path)} target="_blank" rel="noopener noreferrer" className="flex-1 text-sm text-gray-200 truncate">
+                    {name}
+                  </a>
                   <span className="text-xs text-gray-500">{count} version{count > 1 ? "s" : ""}</span>
                 </div>
               ))}
