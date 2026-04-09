@@ -1,0 +1,278 @@
+import { useState, useEffect, useCallback } from "react";
+import { useParams, useNavigate, Link } from "react-router-dom";
+import { api } from "../api";
+
+export default function ProjectView() {
+  const { id } = useParams();
+  const nav = useNavigate();
+  const [project, setProject] = useState(null);
+  const [staged, setStaged] = useState([]);
+  const [message, setMessage] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  const load = useCallback(() => {
+    api.getProject(id).then(setProject);
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleFiles = async (files) => {
+    setUploading(true);
+    for (const f of files) {
+      if (!f.type.startsWith("image/")) continue;
+      const res = await api.uploadFile(f);
+      setStaged((prev) => [...prev, res]);
+    }
+    setUploading(false);
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    handleFiles([...e.dataTransfer.files]);
+  };
+
+  const onFileSelect = (e) => {
+    handleFiles([...e.target.files]);
+    e.target.value = "";
+  };
+
+  const commit = async () => {
+    if (!message.trim() || staged.length === 0) return;
+    await api.createCommit(id, {
+      message,
+      snapshots: staged.map((s) => ({
+        filename: s.filename,
+        file_hash: s.file_hash,
+        storage_path: s.storage_path,
+        file_size: s.file_size,
+      })),
+    });
+    setStaged([]);
+    setMessage("");
+    load();
+  };
+
+  const removeStaged = (index) => {
+    setStaged((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const rollback = async (commitId) => {
+    if (!confirm("Rollback to this commit? All newer commits will be removed."))
+      return;
+    await api.rollback(id, commitId);
+    load();
+  };
+
+  if (!project)
+    return (
+      <div className="text-center py-20 text-gray-500">Loading project...</div>
+    );
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Link to="/" className="text-gray-500 hover:text-gray-300 text-sm">
+              Projects
+            </Link>
+            <span className="text-gray-600">/</span>
+            <h1 className="text-2xl font-bold">{project.name}</h1>
+          </div>
+          {project.description && (
+            <p className="text-gray-500 text-sm">{project.description}</p>
+          )}
+        </div>
+        {project.commits.length >= 2 && (
+          <button
+            onClick={() => nav(`/project/${id}/diff`)}
+            className="bg-[#6e40c9] hover:bg-[#8957e5] px-5 py-2.5 rounded-lg font-medium transition flex items-center gap-2"
+          >
+            <span>🔍</span> Compare Versions
+          </button>
+        )}
+      </div>
+
+      {/* Upload Zone */}
+      <div
+        onDrop={onDrop}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        className={`border-2 border-dashed rounded-xl p-10 text-center mb-6 transition-all ${
+          dragging
+            ? "border-[#58a6ff] bg-[#58a6ff]/5 scale-[1.01]"
+            : "border-gray-700 hover:border-gray-500"
+        }`}
+      >
+        {uploading ? (
+          <p className="text-[#58a6ff]">Uploading...</p>
+        ) : (
+          <>
+            <div className="text-4xl mb-3">📁</div>
+            <p className="text-gray-400 mb-2">Drag & drop images here</p>
+            <label className="cursor-pointer inline-block bg-[#21262d] hover:bg-[#30363d] border border-gray-700 px-4 py-2 rounded-lg text-sm transition">
+              Browse Files
+              <input
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={onFileSelect}
+                className="hidden"
+              />
+            </label>
+            <p className="text-gray-600 text-xs mt-2">
+              PNG, JPG, SVG, WebP supported
+            </p>
+          </>
+        )}
+      </div>
+
+      {/* Staged Files */}
+      {staged.length > 0 && (
+        <div className="bg-[#161b22] border border-[#238636] rounded-xl p-5 mb-6">
+          <h3 className="text-sm font-semibold text-[#3fb950] mb-3 flex items-center gap-2">
+            <span className="w-2 h-2 bg-[#3fb950] rounded-full animate-pulse" />
+            Staged Changes — {staged.length} file
+            {staged.length > 1 ? "s" : ""}
+          </h3>
+
+          <div className="flex gap-3 flex-wrap mb-4">
+            {staged.map((s, i) => (
+              <div key={i} className="relative group">
+                <img
+                  src={api.storageUrl(s.storage_path)}
+                  alt={s.filename}
+                  className="w-24 h-24 object-cover rounded-lg border border-gray-700"
+                />
+                <button
+                  onClick={() => removeStaged(i)}
+                  className="absolute -top-2 -right-2 bg-red-600 hover:bg-red-500 text-white rounded-full 
+                             w-5 h-5 text-xs flex items-center justify-center
+                             opacity-0 group-hover:opacity-100 transition"
+                >
+                  ×
+                </button>
+                <p className="text-xs text-gray-400 mt-1 truncate w-24">
+                  {s.filename}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-3">
+            <input
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Commit message... (e.g. 'Updated hero banner')"
+              className="flex-1 bg-[#0d1117] border border-gray-700 rounded-lg px-4 py-2.5 
+                         focus:border-[#58a6ff] outline-none transition"
+              onKeyDown={(e) => e.key === "Enter" && commit()}
+            />
+            <button
+              onClick={commit}
+              disabled={!message.trim()}
+              className="bg-[#238636] hover:bg-[#2ea043] disabled:opacity-40 disabled:cursor-not-allowed
+                         px-6 py-2.5 rounded-lg font-medium transition"
+            >
+              ✓ Commit
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Commit Timeline */}
+      <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <span>📜</span> Commit History
+        <span className="text-sm font-normal text-gray-500">
+          ({project.commits.length})
+        </span>
+      </h2>
+
+      {project.commits.length === 0 ? (
+        <div className="text-center py-16 text-gray-500">
+          <div className="text-5xl mb-3">⏳</div>
+          <p>No commits yet</p>
+          <p className="text-sm text-gray-600">
+            Upload files and make your first commit
+          </p>
+        </div>
+      ) : (
+        <div className="relative ml-2">
+          {/* Vertical line */}
+          <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-gray-800" />
+
+          {project.commits.map((c, i) => (
+            <div key={c.id} className="relative pl-12 pb-6 group">
+              {/* Dot */}
+              <div
+                className={`absolute left-[8px] top-2 w-4 h-4 rounded-full border-2 border-[#0d1117] z-10 ${
+                  i === 0 ? "bg-[#3fb950]" : "bg-gray-600"
+                }`}
+              />
+
+              <div className="bg-[#161b22] border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <span className="font-medium text-gray-200">
+                      {c.message}
+                    </span>
+                    {i === 0 && (
+                      <span className="ml-2 text-xs bg-[#238636]/20 text-[#3fb950] px-2 py-0.5 rounded-full">
+                        latest
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-gray-600">
+                      {c.id}
+                    </span>
+                    {i > 0 && (
+                      <button
+                        onClick={() => rollback(c.id)}
+                        className="text-xs text-gray-600 hover:text-yellow-400 opacity-0 group-hover:opacity-100 transition"
+                        title="Rollback to this commit"
+                      >
+                        ↩ rollback
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-xs text-gray-500 mb-3">
+                  {new Date(c.created_at + "Z").toLocaleString()}
+                </p>
+
+                <div className="flex gap-2 flex-wrap">
+                  {c.snapshots.map((s) => (
+                    <div key={s.id} className="relative group/img">
+                      <img
+                        src={api.storageUrl(s.storage_path)}
+                        alt={s.filename}
+                        className="w-28 h-28 object-cover rounded-lg border border-gray-700 
+                                   hover:border-[#58a6ff] transition cursor-pointer"
+                        onClick={() =>
+                          window.open(api.storageUrl(s.storage_path), "_blank")
+                        }
+                      />
+                      <p className="text-xs text-gray-500 mt-1 truncate w-28">
+                        {s.filename}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
