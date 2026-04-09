@@ -205,10 +205,26 @@ export default function DiffView() {
             <div className="bg-[#161b22] border border-gray-700 rounded-xl overflow-hidden">
               {/* File header like GitHub */}
               <div className="px-4 py-2.5 border-b border-gray-700 flex items-center gap-3 text-sm">
-                <span className="font-mono text-gray-300">{selectedFilename}</span>
+                <a
+                  href={urlA || urlB}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-gray-300 hover:underline"
+                >
+                  {selectedFilename}
+                </a>
                 <span className="text-xs text-gray-600 font-mono">{snapA?.file_hash?.slice(0, 7)}</span>
                 <span className="text-gray-600">→</span>
+                <a
+                  href={urlB}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-gray-300 hover:underline"
+                >
+                  {selectedFilename}
+                </a>
                 <span className="text-xs text-gray-600 font-mono">{snapB?.file_hash?.slice(0, 7)}</span>
+                
               </div>
 
               {/* ═══ ONLY IN ONE COMMIT ═══ */}
