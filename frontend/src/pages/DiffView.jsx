@@ -150,9 +150,12 @@ export default function DiffView() {
         {MODES.map((m) => (
           <button
             key={m.key}
-            onClick={() => setMode(m.key)}
+            onClick={() => urlA && urlB && setMode(m.key)}
+            disabled={!urlA || !urlB}
             className={`px-4 py-2.5 rounded-lg text-sm font-medium transition flex items-center gap-2 ${
-              mode === m.key
+              !urlA || !urlB
+                ? "bg-[#161b22] border border-gray-700 opacity-30 cursor-not-allowed"
+                : mode === m.key
                 ? "bg-[#58a6ff] text-black shadow-lg shadow-[#58a6ff]/20"
                 : "bg-[#161b22] border border-gray-700 hover:border-gray-500"
             }`}
