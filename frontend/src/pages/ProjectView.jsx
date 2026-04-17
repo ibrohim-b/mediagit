@@ -1,20 +1,28 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../AuthContext";
 
 export default function ProjectView() {
   const { id } = useParams();
   const nav = useNavigate();
+  const { user } = useAuth();
   const [project, setProject] = useState(null);
   const [staged, setStaged] = useState([]);
   const [stagedRemovals, setStagedRemovals] = useState(new Set());
   const [message, setMessage] = useState("");
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [collabInput, setCollabInput] = useState("");
+  const [collabError, setCollabError] = useState("");
 
   const load = useCallback(() => {
     api.getProject(id).then(setProject);
   }, [id]);
+
+  const canWrite = project
+    ? project.is_owner || project.collaborators.some((c) => c.id === user?.id)
+    : false;
 
   useEffect(() => {
     load();
@@ -24,7 +32,7 @@ export default function ProjectView() {
     setUploading(true);
     for (const f of files) {
       if (!f.type.startsWith("image/")) continue;
-      const res = await api.uploadFile(f);
+      const res = await api.uploadFile(f, id);
       setStaged((prev) => [...prev, res]);
     }
     setUploading(false);
@@ -78,6 +86,26 @@ export default function ProjectView() {
     load();
   };
 
+  const addCollaborator = async () => {
+    setCollabError("");
+    const username = collabInput.trim().replace(/^@/, "");
+    const res = await api.addCollaborator(id, username);
+    if (res.detail) { setCollabError(res.detail); return; }
+    setCollabInput("");
+    load();
+  };
+
+  const removeCollaborator = async (uid) => {
+    await api.removeCollaborator(id, uid);
+    load();
+  };
+
+  const toggleVisibility = async () => {
+    const next = project.visibility === "public" ? "private" : "public";
+    await api.updateVisibility(id, next);
+    load();
+  };
+
   if (!project)
     return (
       <div className="text-center py-20 text-gray-500">Loading project...</div>
@@ -89,62 +117,103 @@ export default function ProjectView() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Link to="/" className="text-gray-500 hover:text-gray-300 text-sm">
-              Projects
-            </Link>
+            <Link to="/" className="text-gray-500 hover:text-gray-300 text-sm">Projects</Link>
             <span className="text-gray-600">/</span>
             <h1 className="text-2xl font-bold">{project.name}</h1>
+            <span className="text-xs text-gray-500">{project.visibility === "public" ? "🌐 public" : "🔒 private"}</span>
           </div>
-          {project.description && (
-            <p className="text-gray-500 text-sm">{project.description}</p>
+          {project.description && <p className="text-gray-500 text-sm">{project.description}</p>}
+          <p className="text-xs text-gray-600 mt-1">owner: @{project.owner?.username}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {project.is_owner && (
+            <button
+              onClick={toggleVisibility}
+              className="text-xs border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition"
+            >
+              {project.visibility === "public" ? "🔒 Make private" : "🌐 Make public"}
+            </button>
+          )}
+          {project.commits.length >= 2 && (
+            <button
+              onClick={() => nav(`/project/${id}/diff`)}
+              className="bg-[#6e40c9] hover:bg-[#8957e5] px-5 py-2.5 rounded-lg font-medium transition flex items-center gap-2"
+            >
+              <span>🔍</span> Compare Versions
+            </button>
           )}
         </div>
-        {project.commits.length >= 2 && (
-          <button
-            onClick={() => nav(`/project/${id}/diff`)}
-            className="bg-[#6e40c9] hover:bg-[#8957e5] px-5 py-2.5 rounded-lg font-medium transition flex items-center gap-2"
-          >
-            <span>🔍</span> Compare Versions
-          </button>
-        )}
       </div>
 
+      {/* Collaborators */}
+      {project.is_owner && (
+        <div className="bg-[#161b22] border border-gray-800 rounded-xl p-4 mb-6">
+          <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">👥 Collaborators</h2>
+          <div className="flex flex-wrap gap-2 mb-3">
+            <span className="text-xs bg-[#21262d] px-2 py-1 rounded-full text-gray-400">
+              @{project.owner?.username} <span className="text-gray-600">owner</span>
+            </span>
+            {project.collaborators.map((c) => (
+              <span key={c.id} className="text-xs bg-[#21262d] px-2 py-1 rounded-full text-gray-400 flex items-center gap-1">
+                @{c.username}
+                <button
+                  onClick={() => removeCollaborator(c.id)}
+                  className="text-gray-600 hover:text-red-400 ml-1 transition"
+                >×</button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={collabInput}
+              onChange={(e) => setCollabInput(e.target.value)}
+              placeholder="Add by username"
+              className="bg-[#0d1117] border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:border-[#58a6ff] outline-none transition"
+              onKeyDown={(e) => e.key === "Enter" && addCollaborator()}
+            />
+            <button
+              onClick={addCollaborator}
+              disabled={!collabInput.trim()}
+              className="text-sm bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 px-3 py-1.5 rounded-lg border border-gray-700 transition"
+            >
+              Add
+            </button>
+          </div>
+          {collabError && <p className="text-red-400 text-xs mt-2">{collabError}</p>}
+        </div>
+      )}
+
       {/* Upload Zone */}
-      <div
-        onDrop={onDrop}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        className={`border-2 border-dashed rounded-xl p-10 text-center mb-6 transition-all ${
-          dragging
-            ? "border-[#58a6ff] bg-[#58a6ff]/5 scale-[1.01]"
-            : "border-gray-700 hover:border-gray-500"
-        }`}
-      >
-        {uploading ? (
-          <p className="text-[#58a6ff]">Uploading...</p>
-        ) : (
-          <>
-            <div className="text-4xl mb-3">📁</div>
-            <p className="text-gray-400 mb-2">Drag & drop images here</p>
-            <label className="cursor-pointer inline-block bg-[#21262d] hover:bg-[#30363d] border border-gray-700 px-4 py-2 rounded-lg text-sm transition">
-              Browse Files
-              <input
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={onFileSelect}
-                className="hidden"
-              />
-            </label>
-            <p className="text-gray-600 text-xs mt-2">
-              PNG, JPG, SVG, WebP supported
-            </p>
-          </>
-        )}
-      </div>
+      {canWrite ? (
+        <div
+          onDrop={onDrop}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          className={`border-2 border-dashed rounded-xl p-10 text-center mb-6 transition-all ${
+            dragging ? "border-[#58a6ff] bg-[#58a6ff]/5 scale-[1.01]" : "border-gray-700 hover:border-gray-500"
+          }`}
+        >
+          {uploading ? (
+            <p className="text-[#58a6ff]">Uploading...</p>
+          ) : (
+            <>
+              <div className="text-4xl mb-3">📁</div>
+              <p className="text-gray-400 mb-2">Drag & drop images here</p>
+              <label className="cursor-pointer inline-block bg-[#21262d] hover:bg-[#30363d] border border-gray-700 px-4 py-2 rounded-lg text-sm transition">
+                Browse Files
+                <input type="file" multiple accept="image/*" onChange={onFileSelect} className="hidden" />
+              </label>
+              <p className="text-gray-600 text-xs mt-2">PNG, JPG, SVG, WebP supported</p>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="border-2 border-dashed border-gray-800 rounded-xl p-10 text-center mb-6 opacity-50 cursor-not-allowed">
+          <div className="text-4xl mb-3">🔒</div>
+          <p className="text-gray-500 text-sm">You don't have write access to this project</p>
+          <p className="text-gray-600 text-xs mt-1">Ask the owner to add you as a collaborator</p>
+        </div>
+      )}
 
       {/* Staged Files */}
       {(staged.length > 0 || stagedRemovals.size > 0) && (
@@ -249,21 +318,23 @@ export default function ProjectView() {
                     {name}
                   </a>
                   <span className="text-xs text-gray-500">{count} version{count > 1 ? "s" : ""}</span>
-                  <button
-                    onClick={() => setStagedRemovals((prev) => {
-                      const n = new Set(prev);
-                      n.has(name) ? n.delete(name) : n.add(name);
-                      return n;
-                    })}
-                    className={`text-xs px-2 py-1 rounded transition ${
-                      stagedRemovals.has(name)
-                        ? "bg-red-500/20 text-red-400 border border-red-500/40 hover:bg-red-500/30"
-                        : "text-gray-600 hover:text-red-400 border border-transparent hover:border-red-500/30"
-                    }`}
-                    title={stagedRemovals.has(name) ? "Unstage removal" : "Stage for removal"}
-                  >
-                    {stagedRemovals.has(name) ? "− staged" : "− remove"}
-                  </button>
+                  {canWrite && (
+                    <button
+                      onClick={() => setStagedRemovals((prev) => {
+                        const n = new Set(prev);
+                        n.has(name) ? n.delete(name) : n.add(name);
+                        return n;
+                      })}
+                      className={`text-xs px-2 py-1 rounded transition ${
+                        stagedRemovals.has(name)
+                          ? "bg-red-500/20 text-red-400 border border-red-500/40 hover:bg-red-500/30"
+                          : "text-gray-600 hover:text-red-400 border border-transparent hover:border-red-500/30"
+                      }`}
+                      title={stagedRemovals.has(name) ? "Unstage removal" : "Stage for removal"}
+                    >
+                      {stagedRemovals.has(name) ? "− staged" : "− remove"}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -317,7 +388,7 @@ export default function ProjectView() {
                     <span className="text-xs font-mono text-gray-600">
                       {c.id}
                     </span>
-                    {i > 0 && (
+                    {i > 0 && canWrite && (
                       <button
                         onClick={() => rollback(c.id)}
                         className="text-xs text-gray-600 hover:text-yellow-400 opacity-0 group-hover:opacity-100 transition"
@@ -331,6 +402,9 @@ export default function ProjectView() {
 
                 <p className="text-xs text-gray-500 mb-3">
                   {new Date(c.created_at + "Z").toLocaleString()}
+                  {c.committer_username && (
+                    <span className="ml-2 text-gray-600">by <span className="text-gray-400">@{c.committer_username}</span></span>
+                  )}
                 </p>
 
                 <div className="flex gap-2 flex-wrap">

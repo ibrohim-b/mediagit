@@ -233,7 +233,9 @@ export default function DiffView() {
               className="w-full bg-[#161b22] border border-gray-700 rounded-lg px-4 py-2.5 outline-none focus:border-[#58a6ff] transition text-sm"
             >
               {commitsData.map((c) => (
-                <option key={c.id} value={c.id}>{c.message} — {c.id}</option>
+                <option key={c.id} value={c.id}>
+                  {c.message} — {c.id}{c.committer_username ? ` · @${c.committer_username}` : ""}
+                </option>
               ))}
             </select>
           </div>
