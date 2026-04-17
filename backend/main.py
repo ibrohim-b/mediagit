@@ -7,6 +7,8 @@ import sqlite3
 import uuid
 import hashlib
 import os
+import time
+import threading
 from PIL import Image
 import numpy as np
 
@@ -68,7 +70,29 @@ def init_db():
     db.close()
 
 
+def cleanup_old_diffs():
+    """Delete diff images older than 1 day."""
+    now = time.time()
+    day_ago = now - 86400
+    for fname in os.listdir(DIFFS):
+        fpath = os.path.join(DIFFS, fname)
+        if os.path.isfile(fpath) and os.path.getmtime(fpath) < day_ago:
+            try:
+                os.remove(fpath)
+            except:
+                pass
+
+
+def schedule_cleanup():
+    """Run cleanup every 24 hours."""
+    while True:
+        cleanup_old_diffs()
+        time.sleep(86400)
+
+
 init_db()
+cleanup_old_diffs()
+threading.Thread(target=schedule_cleanup, daemon=True).start()
 
 
 # ── Pydantic Models ─────────────────────────────────
