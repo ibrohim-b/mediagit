@@ -24,51 +24,41 @@ function lerpColor(norm) {
   return STOPS[STOPS.length - 1].slice(1);
 }
 
-function buildHeatmap(urlA, urlB, threshold) {
-  return new Promise((resolve) => {
-    const loadImg = (src) => new Promise((res) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => res(img);
-      img.src = src;
-    });
-    Promise.all([loadImg(urlA), loadImg(urlB)]).then(([imgA, imgB]) => {
-      const w = imgA.naturalWidth;
-      const h = imgA.naturalHeight;
-      const offscreen = document.createElement("canvas");
-      offscreen.width = w; offscreen.height = h;
-      const ctx = offscreen.getContext("2d");
+const loadImg = (src) => new Promise((res) => {
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = () => res(img);
+  img.src = src;
+});
 
-      ctx.drawImage(imgA, 0, 0, w, h);
-      const dataA = ctx.getImageData(0, 0, w, h).data;
-      ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(imgB, 0, 0, w, h);
-      const dataB = ctx.getImageData(0, 0, w, h).data;
+function buildCanvasDiff(urlA, urlB, { threshold = 10, heatmap = false } = {}) {
+  return Promise.all([loadImg(urlA), loadImg(urlB)]).then(([imgA, imgB]) => {
+    const w = imgA.naturalWidth;
+    const h = imgA.naturalHeight;
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
 
-      const out = ctx.createImageData(w, h);
-      let changed = 0;
-      for (let i = 0; i < dataA.length; i += 4) {
-        const mag = 0.299 * Math.abs(dataA[i] - dataB[i])
-                  + 0.587 * Math.abs(dataA[i+1] - dataB[i+1])
-                  + 0.114 * Math.abs(dataA[i+2] - dataB[i+2]);
-        if (mag > threshold) {
-          const norm = Math.min(mag / 255, 1);
-          const [r, g, b] = lerpColor(norm);
-          out.data[i]   = r;
-          out.data[i+1] = g;
-          out.data[i+2] = b;
-          out.data[i+3] = 200;
-          changed++;
-        }
+    ctx.drawImage(imgA, 0, 0, w, h);
+    const dataA = ctx.getImageData(0, 0, w, h).data;
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(imgB, 0, 0, w, h);
+    const dataB = ctx.getImageData(0, 0, w, h).data;
+
+    const out = ctx.createImageData(w, h);
+    let changed = 0;
+    for (let i = 0; i < dataA.length; i += 4) {
+      const mag = 0.299 * Math.abs(dataA[i] - dataB[i])
+                + 0.587 * Math.abs(dataA[i+1] - dataB[i+1])
+                + 0.114 * Math.abs(dataA[i+2] - dataB[i+2]);
+      if (mag > threshold) {
+        const [r, g, b] = heatmap ? lerpColor(Math.min(mag / 255, 1)) : [255, 60, 80];
+        out.data[i] = r; out.data[i+1] = g; out.data[i+2] = b; out.data[i+3] = 200;
+        changed++;
       }
-      ctx.putImageData(out, 0, 0);
-      resolve({
-        dataUrl: offscreen.toDataURL(),
-        changed,
-        total: w * h,
-        change_percent: +((changed / (w * h)) * 100).toFixed(2),
-      });
-    });
+    }
+    ctx.putImageData(out, 0, 0);
+    return { dataUrl: canvas.toDataURL(), changed, total: w * h, change_percent: +((changed / (w * h)) * 100).toFixed(2) };
   });
 }
 
@@ -99,8 +89,9 @@ export default function DiffView() {
   const [mode, setMode] = useState("slider");
   const [sliderPos, setSliderPos] = useState(50);
   const [opacity, setOpacity] = useState(50);
-  const [diffResult, setDiffResult] = useState(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
+  const [pixelDataUrl, setPixelDataUrl] = useState(null);
+  const [pixelStats, setPixelStats] = useState(null);
   const [heatmapDataUrl, setHeatmapDataUrl] = useState(null);
   const [heatmapStats, setHeatmapStats] = useState(null);
   const [heatmapOpacity, setHeatmapOpacity] = useState(80);
@@ -137,7 +128,10 @@ export default function DiffView() {
     const files = getFileList();
     const name = files[0] ?? "";
     setSelectedFilename(name);
-    setDiffResult(null);
+    setPixelDataUrl(null);
+    setPixelStats(null);
+    setHeatmapDataUrl(null);
+    setHeatmapStats(null);
   }, [commitA, commitB, project]);
 
   // When selected filename changes, update snaps
@@ -147,20 +141,22 @@ export default function DiffView() {
     const cB = project.commits.find((c) => c.id === commitB);
     setSnapA(cA?.snapshots?.find((s) => s.filename === selectedFilename) ?? null);
     setSnapB(cB?.snapshots?.find((s) => s.filename === selectedFilename) ?? null);
-    setDiffResult(null);
+    setPixelDataUrl(null);
+    setPixelStats(null);
     setHeatmapDataUrl(null);
     setHeatmapStats(null);
   }, [selectedFilename, commitA, commitB, project]);
 
-  // Server-side pixel diff
+  // Client-side pixel diff
   useEffect(() => {
-    if (mode === "pixel" && snapA && snapB) {
-      setLoadingDiff(true);
-      api
-        .generateDiff(snapA.storage_path, snapB.storage_path)
-        .then((res) => { setDiffResult(res); setLoadingDiff(false); })
-        .catch(() => setLoadingDiff(false));
-    }
+    if (mode !== "pixel" || !snapA || !snapB) return;
+    setPixelDataUrl(null); setPixelStats(null); setLoadingDiff(true);
+    buildCanvasDiff(api.storageUrl(snapA.storage_path), api.storageUrl(snapB.storage_path))
+      .then(({ dataUrl, changed, total, change_percent }) => {
+        setPixelDataUrl(dataUrl);
+        setPixelStats({ changed, total, change_percent });
+        setLoadingDiff(false);
+      });
   }, [mode, snapA, snapB]);
 
   // Client-side heatmap (no server storage)
@@ -169,7 +165,7 @@ export default function DiffView() {
     setHeatmapDataUrl(null);
     setHeatmapStats(null);
     setLoadingDiff(true);
-    buildHeatmap(api.storageUrl(snapA.storage_path), api.storageUrl(snapB.storage_path), heatmapThreshold)
+    buildCanvasDiff(api.storageUrl(snapA.storage_path), api.storageUrl(snapB.storage_path), { threshold: heatmapThreshold, heatmap: true })
       .then(({ dataUrl, changed, total, change_percent }) => {
         setHeatmapDataUrl(dataUrl);
         setHeatmapStats({ changed, total, change_percent });
@@ -389,18 +385,18 @@ export default function DiffView() {
                         <div className="bg-black/60 backdrop-blur px-4 py-2 rounded-lg text-sm">Generating diff...</div>
                       </div>
                     )}
-                    {diffResult && (
-                      <img src={api.storageUrl(diffResult.diff_path)} alt="Diff" className="absolute inset-0 w-full h-full object-contain z-10" />
+                    {pixelDataUrl && (
+                      <img src={pixelDataUrl} alt="Diff" className="absolute inset-0 w-full h-full object-contain z-10" />
                     )}
                   </div>
-                  {diffResult && (
+                  {pixelStats && (
                     <div className="p-4 border-t border-gray-700 flex items-center gap-6 flex-wrap">
                       <div className="flex items-center gap-2">
                         <span className="w-3 h-3 bg-[#ff3c50] rounded-sm inline-block" />
                         <span className="text-sm text-gray-300">Changed pixels</span>
                       </div>
-                      <span className="text-lg font-bold text-red-400 font-mono">{diffResult.change_percent}%</span>
-                      <span className="text-sm text-gray-500">{diffResult.changed_pixels.toLocaleString()} / {diffResult.total_pixels.toLocaleString()} px</span>
+                      <span className="text-lg font-bold text-red-400 font-mono">{pixelStats.change_percent}%</span>
+                      <span className="text-sm text-gray-500">{pixelStats.changed.toLocaleString()} / {pixelStats.total.toLocaleString()} px</span>
                     </div>
                   )}
                 </div>

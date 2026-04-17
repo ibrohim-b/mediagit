@@ -7,10 +7,7 @@ import sqlite3
 import uuid
 import hashlib
 import os
-import time
-import threading
 from PIL import Image
-import numpy as np
 
 # ── App ──────────────────────────────────────────────
 app = FastAPI(title="MediaGit API")
@@ -25,9 +22,7 @@ app.add_middleware(
 # ── Storage ──────────────────────────────────────────
 STORAGE = "storage"
 SNAPS = f"{STORAGE}/snapshots"
-DIFFS = f"{STORAGE}/diffs"
 os.makedirs(SNAPS, exist_ok=True)
-os.makedirs(DIFFS, exist_ok=True)
 
 app.mount("/storage", StaticFiles(directory=STORAGE), name="storage")
 
@@ -70,29 +65,7 @@ def init_db():
     db.close()
 
 
-def cleanup_old_diffs():
-    """Delete diff images older than 1 day."""
-    now = time.time()
-    day_ago = now - 86400
-    for fname in os.listdir(DIFFS):
-        fpath = os.path.join(DIFFS, fname)
-        if os.path.isfile(fpath) and os.path.getmtime(fpath) < day_ago:
-            try:
-                os.remove(fpath)
-            except:
-                pass
-
-
-def schedule_cleanup():
-    """Run cleanup every 24 hours."""
-    while True:
-        cleanup_old_diffs()
-        time.sleep(86400)
-
-
 init_db()
-cleanup_old_diffs()
-threading.Thread(target=schedule_cleanup, daemon=True).start()
 
 
 # ── Pydantic Models ─────────────────────────────────
@@ -112,10 +85,6 @@ class CommitIn(BaseModel):
     message: str
     snapshots: List[SnapshotIn]
 
-
-class DiffIn(BaseModel):
-    path_a: str
-    path_b: str
 
 
 # ── Project Routes ───────────────────────────────────
@@ -258,49 +227,6 @@ def rollback(pid: str, commit_id: str):
     db.commit()
     db.close()
     return {"ok": True, "removed": len(newer)}
-
-
-# ── Diff Route ───────────────────────────────────────
-@app.post("/api/diff")
-def generate_diff(data: DiffIn):
-    fa = os.path.join(STORAGE, data.path_a)
-    fb = os.path.join(STORAGE, data.path_b)
-
-    if not os.path.exists(fa) or not os.path.exists(fb):
-        raise HTTPException(400, "One or both files not found")
-
-    img_a = Image.open(fa).convert("RGBA")
-    img_b = Image.open(fb).convert("RGBA")
-
-    # Resize B to match A
-    if img_a.size != img_b.size:
-        img_b = img_b.resize(img_a.size, Image.LANCZOS)
-
-    arr_a = np.array(img_a, dtype=np.int16)
-    arr_b = np.array(img_b, dtype=np.int16)
-
-    diff = np.abs(arr_a - arr_b)
-    magnitude = np.max(diff[:, :, :3], axis=2)
-
-    h, w = magnitude.shape
-    result = np.zeros((h, w, 4), dtype=np.uint8)
-    mask = magnitude > 10
-    result[mask] = [255, 60, 80, 200]
-    result[~mask] = [0, 0, 0, 30]
-
-    diff_name = f"diff_{uuid.uuid4().hex[:8]}.png"
-    diff_path = os.path.join(DIFFS, diff_name)
-    Image.fromarray(result).save(diff_path)
-
-    changed = int(np.sum(mask))
-    total = h * w
-
-    return {
-        "diff_path": f"diffs/{diff_name}",
-        "changed_pixels": changed,
-        "total_pixels": total,
-        "change_percent": round(changed / total * 100, 2) if total else 0,
-    }
 
 
 # ── Run ──────────────────────────────────────────────

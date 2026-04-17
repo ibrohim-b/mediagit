@@ -40,14 +40,6 @@ export const api = {
       method: "POST",
     }).then((r) => r.json()),
 
-  // Diff
-  generateDiff: (pathA, pathB) =>
-    fetch(`${API}/diff`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path_a: pathA, path_b: pathB }),
-    }).then((r) => r.json()),
-
   // Helpers
   storageUrl: (path) => `${STORAGE_BASE}/${path}`,
 };
