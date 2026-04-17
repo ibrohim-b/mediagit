@@ -96,6 +96,9 @@ export default function DiffView() {
   const [heatmapStats, setHeatmapStats] = useState(null);
   const [heatmapOpacity, setHeatmapOpacity] = useState(80);
   const [heatmapThreshold, setHeatmapThreshold] = useState(10);
+  const [aiResult, setAiResult] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
 
   const containerRef = useRef(null);
   const isDragging = useRef(false);
@@ -132,6 +135,8 @@ export default function DiffView() {
     setPixelStats(null);
     setHeatmapDataUrl(null);
     setHeatmapStats(null);
+    setAiResult(null);
+    setAiError(null);
   }, [commitA, commitB, project]);
 
   // When selected filename changes, update snaps
@@ -145,6 +150,8 @@ export default function DiffView() {
     setPixelStats(null);
     setHeatmapDataUrl(null);
     setHeatmapStats(null);
+    setAiResult(null);
+    setAiError(null);
   }, [selectedFilename, commitA, commitB, project]);
 
   // Client-side pixel diff
@@ -218,6 +225,48 @@ export default function DiffView() {
       </div>
 
       <h1 className="text-2xl font-bold mb-6">🔍 Visual Diff</h1>
+
+      {/* AI Analysis Panel */}
+      {(urlA && urlB) && (
+        <div className="mb-6 bg-[#161b22] border border-gray-700 rounded-xl p-4">
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-sm font-semibold text-[#58a6ff]">✨ AI Analysis</span>
+            <button
+              onClick={async () => {
+                setAiLoading(true);
+                setAiResult(null);
+                setAiError(null);
+                try {
+                  const result = await api.analyzeWithAI(urlA, urlB);
+                  setAiResult(result);
+                } catch (e) {
+                  setAiError(e.message);
+                } finally {
+                  setAiLoading(false);
+                }
+              }}
+              disabled={aiLoading}
+              className="px-3 py-1 rounded-lg text-xs font-medium bg-[#238636] hover:bg-[#2ea043] disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              {aiLoading ? "Analyzing..." : "Analyze Changes"}
+            </button>
+          </div>
+          {aiLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+              </svg>
+              Sending images to AI...
+            </div>
+          )}
+          {aiError && <p className="text-red-400 text-sm">{aiError}</p>}
+          {aiResult && <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{aiResult}</p>}
+          {!aiLoading && !aiResult && !aiError && (
+            <p className="text-gray-600 text-xs">Click "Analyze Changes" to get an AI description of what changed between the two images.</p>
+          )}
+        </div>
+      )}
 
       {/* Commit Selectors */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
