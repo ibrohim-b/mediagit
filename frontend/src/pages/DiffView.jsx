@@ -2,11 +2,90 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
 
+// Colormap stops: [normPos, R, G, B]
+const STOPS = [
+  [0.00,   0,   0, 255],
+  [0.04,   0,  80, 255],
+  [0.15,   0, 220, 220],
+  [0.35,   0, 255,   0],
+  [0.60, 255, 220,   0],
+  [1.00, 255,  30,  30],
+];
+
+function lerpColor(norm) {
+  for (let i = 0; i < STOPS.length - 1; i++) {
+    const [t0, r0, g0, b0] = STOPS[i];
+    const [t1, r1, g1, b1] = STOPS[i + 1];
+    if (norm <= t1) {
+      const t = (norm - t0) / (t1 - t0);
+      return [r0 + t * (r1 - r0), g0 + t * (g1 - g0), b0 + t * (b1 - b0)];
+    }
+  }
+  return STOPS[STOPS.length - 1].slice(1);
+}
+
+function buildHeatmap(urlA, urlB, threshold) {
+  return new Promise((resolve) => {
+    const loadImg = (src) => new Promise((res) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => res(img);
+      img.src = src;
+    });
+    Promise.all([loadImg(urlA), loadImg(urlB)]).then(([imgA, imgB]) => {
+      const w = imgA.naturalWidth;
+      const h = imgA.naturalHeight;
+      const offscreen = document.createElement("canvas");
+      offscreen.width = w; offscreen.height = h;
+      const ctx = offscreen.getContext("2d");
+
+      ctx.drawImage(imgA, 0, 0, w, h);
+      const dataA = ctx.getImageData(0, 0, w, h).data;
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(imgB, 0, 0, w, h);
+      const dataB = ctx.getImageData(0, 0, w, h).data;
+
+      const out = ctx.createImageData(w, h);
+      let changed = 0;
+      for (let i = 0; i < dataA.length; i += 4) {
+        const mag = 0.299 * Math.abs(dataA[i] - dataB[i])
+                  + 0.587 * Math.abs(dataA[i+1] - dataB[i+1])
+                  + 0.114 * Math.abs(dataA[i+2] - dataB[i+2]);
+        if (mag > threshold) {
+          const norm = Math.min(mag / 255, 1);
+          const [r, g, b] = lerpColor(norm);
+          out.data[i]   = r;
+          out.data[i+1] = g;
+          out.data[i+2] = b;
+          out.data[i+3] = 200;
+          changed++;
+        }
+      }
+      ctx.putImageData(out, 0, 0);
+      resolve({
+        dataUrl: offscreen.toDataURL(),
+        changed,
+        total: w * h,
+        change_percent: +((changed / (w * h)) * 100).toFixed(2),
+      });
+    });
+  });
+}
+
 const MODES = [
   { key: "slider", label: "Slider", icon: "↔️" },
   { key: "side", label: "Side by Side", icon: "◫" },
   { key: "onion", label: "Onion Skin", icon: "👻" },
   { key: "pixel", label: "Pixel Diff", icon: "🔴" },
+  { key: "heatmap", label: "Heatmap", icon: "🌡️" },
+];
+
+const HEATMAP_LEGEND = [
+  { color: "#001eff", label: "Minimal" },
+  { color: "#00dcdc", label: "Low" },
+  { color: "#00ff00", label: "Medium" },
+  { color: "#ffdc00", label: "High" },
+  { color: "#ff1e1e", label: "Extreme" },
 ];
 
 export default function DiffView() {
@@ -22,6 +101,10 @@ export default function DiffView() {
   const [opacity, setOpacity] = useState(50);
   const [diffResult, setDiffResult] = useState(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
+  const [heatmapDataUrl, setHeatmapDataUrl] = useState(null);
+  const [heatmapStats, setHeatmapStats] = useState(null);
+  const [heatmapOpacity, setHeatmapOpacity] = useState(80);
+  const [heatmapThreshold, setHeatmapThreshold] = useState(10);
 
   const containerRef = useRef(null);
   const isDragging = useRef(false);
@@ -65,9 +148,11 @@ export default function DiffView() {
     setSnapA(cA?.snapshots?.find((s) => s.filename === selectedFilename) ?? null);
     setSnapB(cB?.snapshots?.find((s) => s.filename === selectedFilename) ?? null);
     setDiffResult(null);
+    setHeatmapDataUrl(null);
+    setHeatmapStats(null);
   }, [selectedFilename, commitA, commitB, project]);
 
-  // Generate pixel diff
+  // Server-side pixel diff
   useEffect(() => {
     if (mode === "pixel" && snapA && snapB) {
       setLoadingDiff(true);
@@ -77,6 +162,20 @@ export default function DiffView() {
         .catch(() => setLoadingDiff(false));
     }
   }, [mode, snapA, snapB]);
+
+  // Client-side heatmap (no server storage)
+  useEffect(() => {
+    if (mode !== "heatmap" || !snapA || !snapB) return;
+    setHeatmapDataUrl(null);
+    setHeatmapStats(null);
+    setLoadingDiff(true);
+    buildHeatmap(api.storageUrl(snapA.storage_path), api.storageUrl(snapB.storage_path), heatmapThreshold)
+      .then(({ dataUrl, changed, total, change_percent }) => {
+        setHeatmapDataUrl(dataUrl);
+        setHeatmapStats({ changed, total, change_percent });
+        setLoadingDiff(false);
+      });
+  }, [mode, snapA, snapB, heatmapThreshold]);
 
   const updateSlider = useCallback((clientX) => {
     if (!containerRef.current) return;
@@ -304,6 +403,55 @@ export default function DiffView() {
                       <span className="text-sm text-gray-500">{diffResult.changed_pixels.toLocaleString()} / {diffResult.total_pixels.toLocaleString()} px</span>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ═══ HEATMAP (client-side, no server storage) ═══ */}
+              {mode === "heatmap" && urlA && urlB && (
+                <div>
+                  <div className="relative" style={{ aspectRatio: "16 / 10" }}>
+                    <img src={urlB} alt="After" className="absolute inset-0 w-full h-full object-contain" />
+                    {loadingDiff && (
+                      <div className="absolute inset-0 flex items-center justify-center z-10">
+                        <div className="bg-black/60 backdrop-blur px-4 py-2 rounded-lg text-sm">Generating heatmap...</div>
+                      </div>
+                    )}
+                    {heatmapDataUrl && (
+                      <img
+                        src={heatmapDataUrl}
+                        alt="Heatmap"
+                        className="absolute inset-0 w-full h-full object-contain z-10 transition-opacity"
+                        style={{ opacity: heatmapOpacity / 100 }}
+                      />
+                    )}
+                  </div>
+
+                  <div className="p-4 border-t border-gray-700 space-y-3">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-xs text-gray-500 uppercase tracking-wider">Intensity:</span>
+                      <div className="flex items-center gap-2">
+                        {HEATMAP_LEGEND.map(({ color, label }) => (
+                          <div key={label} className="flex items-center gap-1">
+                            <span className="w-3 h-3 rounded-sm inline-block" style={{ backgroundColor: color }} />
+                            <span className="text-xs text-gray-400">{label}</span>
+                          </div>
+                        ))}
+                      </div>
+                      {heatmapStats && (
+                        <span className="ml-auto text-sm font-mono text-red-400 font-bold">{heatmapStats.change_percent}% changed</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500 w-20">Overlay</span>
+                      <input type="range" min="0" max="100" value={heatmapOpacity} onChange={(e) => setHeatmapOpacity(Number(e.target.value))} className="flex-1" />
+                      <span className="text-xs text-[#58a6ff] font-mono w-10 text-right">{heatmapOpacity}%</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500 w-20">Threshold</span>
+                      <input type="range" min="1" max="80" value={heatmapThreshold} onChange={(e) => setHeatmapThreshold(Number(e.target.value))} className="flex-1" />
+                      <span className="text-xs text-[#58a6ff] font-mono w-10 text-right">{heatmapThreshold}</span>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

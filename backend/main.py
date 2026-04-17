@@ -282,12 +282,11 @@ def generate_diff(data: DiffIn):
     diff = np.abs(arr_a - arr_b)
     magnitude = np.max(diff[:, :, :3], axis=2)
 
-    # Build heatmap
     h, w = magnitude.shape
     result = np.zeros((h, w, 4), dtype=np.uint8)
     mask = magnitude > 10
-    result[mask] = [255, 60, 80, 200]   # changed → red
-    result[~mask] = [0, 0, 0, 30]       # unchanged → near-transparent
+    result[mask] = [255, 60, 80, 200]
+    result[~mask] = [0, 0, 0, 30]
 
     diff_name = f"diff_{uuid.uuid4().hex[:8]}.png"
     diff_path = os.path.join(DIFFS, diff_name)
