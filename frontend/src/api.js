@@ -1,8 +1,18 @@
-const API = "http://localhost:8000/api";
-const STORAGE_BASE = "http://localhost:8000/storage";
+const BACKEND_URL =
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1"
+    ? "http://localhost:8000"
+    : `http://${window.location.hostname}:8000`;
+
+const API = `${BACKEND_URL}/api`;
+const STORAGE_BASE = `${BACKEND_URL}/storage`;
 
 const getToken = () => {
-  try { return JSON.parse(localStorage.getItem("mg_user"))?.token; } catch { return null; }
+  try {
+    return JSON.parse(localStorage.getItem("mg_user"))?.token;
+  } catch {
+    return null;
+  }
 };
 
 const authHeaders = () => {
@@ -10,22 +20,26 @@ const authHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-const json = (r) => r.json();
+const json = async (r) => {
+  const data = await r.json();
+  if (!r.ok) throw { detail: data.detail };
+  return data;
+};
 
 export const api = {
   // Auth
-  register: (username, password) =>
+  register: (username, email, fullName, password) =>
     fetch(`${API}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, email, full_name: fullName, password }),
     }).then(json),
 
-  login: (username, password) =>
+  login: (login, password) =>
     fetch(`${API}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ login, password }),
     }).then(json),
 
   // Projects
@@ -42,8 +56,23 @@ export const api = {
   getProject: (id) =>
     fetch(`${API}/projects/${id}`, { headers: authHeaders() }).then(json),
 
+  getTimeline: (id) =>
+    fetch(`${API}/projects/${id}/timeline`, { headers: authHeaders() }).then(
+      json,
+    ),
+
+  updateProject: (id, data) =>
+    fetch(`${API}/projects/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(data),
+    }).then(json),
+
   deleteProject: (id) =>
-    fetch(`${API}/projects/${id}`, { method: "DELETE", headers: authHeaders() }).then(json),
+    fetch(`${API}/projects/${id}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    }).then(json),
 
   updateVisibility: (id, visibility) =>
     fetch(`${API}/projects/${id}`, {
@@ -70,7 +99,11 @@ export const api = {
   uploadFile: (file, projectId) => {
     const fd = new FormData();
     fd.append("file", file);
-    return fetch(`${API}/upload?project_id=${projectId}`, { method: "POST", headers: authHeaders(), body: fd }).then(json);
+    return fetch(`${API}/upload?project_id=${projectId}`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    }).then(json);
   },
 
   // Commits
@@ -116,14 +149,19 @@ export const api = {
       },
       body: JSON.stringify({
         model: "nvidia/nemotron-nano-12b-v2-vl:free",
-        messages: [{
-          role: "user",
-          content: [
-            { type: "text", text: "These are two versions of an image (Before and After). Describe concisely what has visually changed between them. Be specific about colors, shapes, text, layout, or content differences.  Keep it short." },
-            { type: "image_url", image_url: { url: b64A } },
-            { type: "image_url", image_url: { url: b64B } },
-          ],
-        }],
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "These are two versions of an image (Before and After). Describe concisely what has visually changed between them. Be specific about colors, shapes, text, layout, or content differences.  Keep it short.",
+              },
+              { type: "image_url", image_url: { url: b64A } },
+              { type: "image_url", image_url: { url: b64B } },
+            ],
+          },
+        ],
       }),
     });
     const data = await res.json();
@@ -131,6 +169,92 @@ export const api = {
     return data.choices[0].message.content;
   },
 
+  // Branches
+  getBranches: (pid) =>
+    fetch(`${API}/projects/${pid}/branches`, { headers: authHeaders() }).then(
+      json,
+    ),
+
+  createBranch: (pid, data) =>
+    fetch(`${API}/projects/${pid}/branches`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(data),
+    }).then(json),
+
+  getBranch: (pid, bid) =>
+    fetch(`${API}/projects/${pid}/branches/${bid}`, {
+      headers: authHeaders(),
+    }).then(json),
+
+  deleteBranch: (pid, bid) =>
+    fetch(`${API}/projects/${pid}/branches/${bid}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    }).then(json),
+
+  commitToBranch: (pid, bid, data) =>
+    fetch(`${API}/projects/${pid}/branches/${bid}/commits`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(data),
+    }).then(json),
+
+  // Pull Requests
+  createPR: (pid, bid, data) =>
+    fetch(`${API}/projects/${pid}/branches/${bid}/pull-request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(data),
+    }).then(json),
+
+  getPRs: (pid) =>
+    fetch(`${API}/projects/${pid}/pull-requests`, {
+      headers: authHeaders(),
+    }).then(json),
+
+  getPR: (pid, prid) =>
+    fetch(`${API}/projects/${pid}/pull-requests/${prid}`, {
+      headers: authHeaders(),
+    }).then(json),
+
+  reviewPR: (pid, prid, data) =>
+    fetch(`${API}/projects/${pid}/pull-requests/${prid}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(data),
+    }).then(json),
+
+  // Notifications
+  getNotifications: () =>
+    fetch(`${API}/notifications`, { headers: authHeaders() }).then(json),
+
+  markNotificationRead: (nid) =>
+    fetch(`${API}/notifications/${nid}/read`, {
+      method: "POST",
+      headers: authHeaders(),
+    }).then(json),
+
+  markAllNotificationsRead: () =>
+    fetch(`${API}/notifications/read-all`, {
+      method: "POST",
+      headers: authHeaders(),
+    }).then(json),
+
   // Helpers
   storageUrl: (path) => `${STORAGE_BASE}/${path}`,
+
+  // Paywall
+  payForProject: (pid) =>
+    fetch(`${API}/projects/${pid}/pay`, {
+      method: "POST",
+      headers: authHeaders(),
+    }).then(json),
+
+  setProjectPrice: (pid, price) =>
+    fetch(`${API}/projects/${pid}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ price }),
+    }).then(json),
 };

@@ -6,15 +6,15 @@ cd "$(dirname "$0")"
 cd backend
 python3 -m venv .venv 2>/dev/null
 source .venv/bin/activate
-pip install -r requirements.txt -q
-python main.py &
+pip3 install -r requirements.txt -q
+python3 main.py &
 BACKEND_PID=$!
 cd ..
 
 # Frontend
 cd frontend
 npm install -q
-npm run dev --host&
+npm run dev -- --host &
 FRONTEND_PID=$!
 cd ..
 
